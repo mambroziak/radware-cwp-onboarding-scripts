@@ -8,7 +8,7 @@ CloudFormation Template to deploy a role on AWS account to connenct to Radware C
 (Placeholder, awaiting SE account)
 
 ## Manual Deployment in AWS:
-1. Login to the AWS console, select a region, and navigate to CloudFormation. (placeholder, awaiting SE account): 
+1. Login to the AWS console, select a region, and navigate to CloudFormation. 
 1. Click **Create stack**
 1. Under **Specify template**, click **Upload a template file**
 1. Click the **Choose file** button and upload the CFT from this repo.
