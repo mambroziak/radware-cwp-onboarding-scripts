@@ -1,0 +1,113 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/SecurityAudit
+      - arn:aws:iam::aws:policy/AmazonInspectorReadOnlyAccess
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            AWS: arn:aws:iam::342443945406:root
+          Action: sts:AssumeRole
+          Condition:
+            StringEquals:
+              sts:ExternalId:
+                Ref: ExternalId
+  ReadOnlyPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: CWPReadonly
+      Roles:
+      - Ref: Role
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Sid: ListBuckets
+          Action: 
+          - s3:ListBucket
+          Effect: Allow
+          Resource: 
+          - !Join
+            - ''
+            - - 'arn:aws:s3:::'
+              - !Ref FlowLogsBucket
+          - !Join
+            - ''
+            - - 'arn:aws:s3:::'
+              - !Ref FlowLogsBucket
+              - '/*'
+          - !Join
+            - ''
+            - - 'arn:aws:s3:::'
+              - !Ref CloudTrailBucket
+          - !Join
+            - ''
+            - - 'arn:aws:s3:::'
+              - !Ref CloudTrailBucket
+              - '/*'
+        - Sid: ReadLogs
+          Action:
+          - s3:Get*
+          Effect: Allow
+          Resource: 
+          - !Join
+            - ''
+            - - 'arn:aws:s3:::'
+              - !Ref FlowLogsBucket
+              - '/AWSLogs/'
+          - !Join
+            - ''
+            - - 'arn:aws:s3:::'
+              - !Ref FlowLogsBucket
+              - '/AWSLogs/*'
+          - !Join
+            - ''
+            - - 'arn:aws:s3:::'
+              - !Ref CloudTrailBucket
+              - '/AWSLogs/'
+          - !Join
+            - ''
+            - - 'arn:aws:s3:::'
+              - !Ref CloudTrailBucket
+              - '/AWSLogs/*'
+        - Sid: CWPReadonly
+          Action:
+          - logs:GetLogEvents
+          - logs:FilterLogEvents
+          - s3:ListBucket
+          - sns:ListSubscriptions
+          - elasticfilesystem:DescribeTags
+          - dynamodb:ListTagsOfResource
+          - wafv2:ListResourcesForWebACL
+          - wafv2:ListWebACLs
+          - waf-regional:ListResourcesForWebACL
+          Effect: Allow
+          Resource: "*"
+Parameters:
+  ExternalId:
+    Type: String
+    Description: Enter CWP External ID (e.g. a1b2c3d4e5f6)
+  FlowLogsBucket:
+    Type: String
+    Default: s3BucketName</optionalPrefix>/
+    Description: Enter S3 bucket name for FlowLogs (e.g. mybucketname/myprefix/)
+  CloudTrailBucket:
+    Type: String
+    Default: s3BucketName</optionalPrefix>/
+    Description: Enter S3 bucket name for CloudTrail (e.g. mybucketname/myprefix/)
+Outputs:
+  RoleARNID:
+    Description: Your Role ARN ID
+    Value:
+      Fn::GetAtt:
+      - Role
+      - Arn
+  ExternalId:
+    Description: Your External ID
+    Value:
+      Ref: ExternalId
