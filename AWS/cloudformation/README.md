@@ -4,8 +4,7 @@ CloudFormation Template to deploy a role on AWS account to connenct to Radware C
 # Steps:
 
 ## One-click deployment in AWS:
-[<img src="https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png">](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=radwareCwpIAMPermissions&templateURL=https://radwarecwptemplates.s3.amazonaws.com/cft/template.yml)
-(Placeholder, awaiting SE account)
+[<img src="https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png">](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=radwareCwpIAMPermissions&templateURL=https://radware-cwp-devops-us-east-1.s3.amazonaws.com/onboarding/cloudformation/Radware-CWP-ReadOnly.yaml)
 
 ## Manual Deployment in AWS:
 1. Login to the AWS console, select a region, and navigate to CloudFormation. 
