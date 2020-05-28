@@ -26,7 +26,7 @@ Resources:
   ReadOnlyPolicy:
     Type: AWS::IAM::Policy
     Properties:
-      PolicyName: CWPReadOnly
+      PolicyName: RadwareCWPReadOnlyAccess
       Roles:
       - Ref: Role
       PolicyDocument:
@@ -82,7 +82,7 @@ Resources:
             - - 'arn:aws:s3:::'
               - !Ref S3BucketCloudTrail
               - '/AWSLogs/*'
-        - Sid: CWPReadOnly
+        - Sid: RadwareCWPReadOnlyAccess
           Action:
           - logs:GetLogEvents
           - logs:FilterLogEvents
@@ -98,12 +98,12 @@ Resources:
 Parameters:
   ExternalId:
     Type: String
-    Description: 'Enter External ID for CWP Role (mininum length: 8) (e.g. a1b2c3d4e5f6)'
+    Description: 'Enter External ID for Radware CWP Role (mininum length: 8) (e.g. a1b2c3d4e5f6)'
     MinLength: 8
   S3BucketFlowLogs:
     Type: String
     Default: s3BucketName</optionalPrefix>
-    Description: 'Enter S3 bucket name for FlowLogs (e.g. mybucketname/myprefix)'
+    Description: 'Enter S3 bucket name for VPC FlowLogs (e.g. mybucketname/myprefix)'
     MinLength: 3
   S3BucketCloudTrail:
     Type: String
