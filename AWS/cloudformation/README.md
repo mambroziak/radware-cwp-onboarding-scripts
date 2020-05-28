@@ -5,7 +5,7 @@ CloudFormation Template to deploy a role on AWS account to connenct to Radware C
 
 ## AWS Setup
 ### [Option 1] One-click CFT Deployment:
-[<img src="https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png">](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=radwareCwpIAMPermissions&templateURL=https://radware-cwp-devops-us-east-1.s3.amazonaws.com/onboarding/cloudformation/Radware-CWP-ReadOnly.yaml)
+[<img src="https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png">](https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/new?stackName=RadwareCWP-ReadOnlyAccess&templateURL=https://radware-cwp-devops-us-east-1.s3.amazonaws.com/onboarding/cloudformation/Radware-CWP-ReadOnly.yaml)
 1. Fill in the parameter fields. Save the **External ID** for a later step.
 1. Click Next twice and check "I acknowledge that AWS CloudFormation might create IAM resources." (or use "--capabilities CAPABILITY_IAM" in the AWS CLI.)
 1. Click **Create stack**.
