@@ -34,7 +34,7 @@ from time import sleep
 from requests.exceptions import HTTPError
 from datetime import datetime
 
-token = ''
+api_token = ''
 cft_s3_url = ''
 cwpreadonly = ''
 mode = ''
@@ -44,33 +44,40 @@ print(
     f'\n:: Radware CWP AWS Onboarding with CFT Deployment Automation :: \nExecution time: {str(datetime.now())} \n')  # Got an error? You need Python 3.6 or later.
 
 
-def add_aws_account_to_cwp(name, arn, extid, readonly):
-    url = "https://api.us-east-1.cwp.radwarecloud.com/api/v1/CloudAccounts "
-    payload = {"name": name, "credentials": {"arn": arn, "secret": extid, "type": "RoleBased", "isReadOnly": readonly},
-               "fullProtection": "false"}
+def add_aws_account_to_cwp(name, role_arn, external_id):
+    arn_parsed = role_arn.split(':')
+    account_id = arn_parsed[4]
 
-    print('\nAdding target AWS account to cwp...')
+    url = f'https://api.us-east-1.CWP.radwarecloud.com/api/v1/accounts/account/{account_id}'
+    payload = {
+        'accountName': name,
+        'cloudPlatform': 'AWS',
+        'roleArn': role_arn,
+        'externalId': external_id
+    }
+
+    print('\nAdding target AWS account to Radware CWP...')
     resp = http_request('post', url, payload, False)
 
-    if resp.status_code == 201:
+    if resp.status_code in [200, 201]:
         resp = json.loads(resp.content)
-        return resp['id']
+        return True
 
     elif resp.status_code == 400:
-        print(
-            'AWS Cloud Account already added or bad request. Please remove the account from cwp before using this script.')
+        print('ADD ACCOUNT: Bad request.')
         print(payload)
+        return False
     else:
-        print('Error when attempting to add AWS account.')
+        print('Unknown error when attempting to add AWS account.')
         print(resp)
         return False
 
 
 def get_aws_accounts_from_cwp():
-    url = "https://api.cwp.com/v2/CloudAccounts"
+    url = "https://api.CWP.com/v2/CloudAccounts"
     payload = {}
 
-    print('\nGetting list of AWS accounts already onboarded to cwp...')
+    print('\nGetting list of AWS accounts already onboarded to CWP...')
     resp = http_request('get', url, payload, False)
 
     if resp.status_code == 200:
@@ -143,7 +150,7 @@ def check_cft_stack_exists(aws_cf_client, name):
         print(f'Unexpected error: {e}')
 
 
-def create_cft_stack(aws_cf_client, name, cfturl, extid):
+def create_cft_stack(aws_cf_client, name, cfturl, external_id):
     try:
         resp = aws_cf_client.create_stack(
             StackName=name,
@@ -151,7 +158,7 @@ def create_cft_stack(aws_cf_client, name, cfturl, extid):
             Parameters=[
                 {
                     'ParameterKey': 'Externalid',
-                    'ParameterValue': extid
+                    'ParameterValue': external_id
                 },
             ],
             Capabilities=['CAPABILITY_IAM'],
@@ -213,14 +220,14 @@ def mode_organizations_onboard(aws_org_client, aws_sts_client, aws_cf_client):
             print('\nEnd of cloud acounts list.')
             break
 
-    # Get AWS accounts from cwp and iterate through to create a list    
+    # Get AWS accounts from CWP and iterate through to create a list    
     cwp_aws_accounts_raw = get_aws_accounts_from_cwp()
     cwp_aws_accounts_pruned = {''}
     for account in cwp_aws_accounts_raw:
         cwp_aws_accounts_pruned.add(account['externalAccountNumber'])
 
     unprotected_account_list = [d for d in org_accounts_pruned if (
-        d['id']) not in cwp_aws_accounts_pruned]  # create list of AWS accounts not found in cwp
+        d['id']) not in cwp_aws_accounts_pruned]  # create list of AWS accounts not found in CWP
 
     if len(unprotected_account_list) == 0:
         print("No unprotected accounts found.")
@@ -268,11 +275,11 @@ def mode_organizations_onboard(aws_org_client, aws_sts_client, aws_cf_client):
 
         if (not cwp_cloud_account_id or not cwp_ou_id or not ou_attached) and not OPTIONS.ignore_failures:
             count_failures += 1
-            print(f'\nError when attempting to onboard AWS account to cwp. Exiting...')
+            print(f'\nError when attempting to onboard AWS account to CWP. Exiting...')
             _print_stats(len(unprotected_account_list), count_successes, count_failures)
             exit(1)
         elif (cwp_cloud_account_id == False or not cwp_ou_id or not ou_attached) and OPTIONS.ignore_failures:
-            print('\nError when attempting to onboard AWS account to cwp. Continuing...')
+            print('\nError when attempting to onboard AWS account to CWP. Continuing...')
             count_failures += 1
         elif cwp_ou_id and cwp_cloud_account_id and ou_attached:
             count_successes += 1
@@ -290,8 +297,8 @@ def process_account(aws_cf_client, aws_account_name):
         print('\nCreating CloudFormation Stack...')
 
     print('\nProvisioning the CloudFormation stack in AWS...')
-    extid = ''.join(choice(string.ascii_letters + string.digits) for _ in range(24))
-    stack_created = create_cft_stack(aws_cf_client, cwpstack, cft_s3_url, extid)
+    external_id = ''.join(choice(string.ascii_letters + string.digits) for _ in range(24))
+    stack_created = create_cft_stack(aws_cf_client, cwpstack, cft_s3_url, external_id)
 
     # CHECK CFT STATUS
     t = 0
@@ -315,14 +322,14 @@ def process_account(aws_cf_client, aws_account_name):
         if output['OutputKey'] == 'role_arnID':
             role_arn = output['OutputValue']
 
-    # Add the AWS account to cwp
-    cwp_account_added = add_aws_account_to_cwp(aws_account_name, role_arn, extid, cwpreadonly)
+    # Add the AWS account to CWP
+    cwp_account_added = add_aws_account_to_cwp(aws_account_name, role_arn, external_id, cwpreadonly)
     print(f'Added: {role_arn.split(":")[4]} | {aws_account_name} | {cwp_account_added}')
     return cwp_account_added
 
 
 def get_api_token(username, password):
-    url = 'https://sas.cwp.radwarecloud.com/sas/login'
+    url = 'https://sas.CWP.radwarecloud.com/sas/login'
     payload = {"username": username, "password": password}
 
     api_session = http_request(request_type='post', url=url, payload=payload, token=None, silent=False)
@@ -368,7 +375,7 @@ def http_request(request_type, url, payload, token, silent):
 
 
 def main(argv=None):
-    global token, cft_s3_url, cwpreadonly, mode, OPTIONS
+    global api_token, cft_s3_url, cwpreadonly, mode, OPTIONS
 
     token = get_api_token(username='api_user@radwarese.com', password='Matt!234')
     print(f"My Token: {token}")
@@ -385,7 +392,7 @@ def main(argv=None):
     optional = parser.add_argument_group('optional arguments')
 
     optional.add_argument('--region', dest='region_name', default='us-east-1',
-                          help='AWS Region Name for cwp CFT deployment. Default: us-east-1')
+                          help='AWS Region Name for CWP CFT deployment. Default: us-east-1')
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -427,7 +434,7 @@ def main(argv=None):
     config = configparser.ConfigParser()
     config.read("./cwp_onboard_aws.conf")
 
-    # Get cwp API credentials from env variables
+    # Get CWP API credentials from env variables
     if not os.environ.get('cwp_api_username') or not os.environ.get('cwp_api_password'):
         print('\nERROR: Radware CWP credentials not found in environment variables.')
         exit(1)
