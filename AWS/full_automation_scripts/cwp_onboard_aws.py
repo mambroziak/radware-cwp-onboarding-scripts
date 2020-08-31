@@ -36,7 +36,6 @@ from datetime import datetime
 
 api_token = ''
 cft_s3_url = ''
-cwpreadonly = ''
 mode = ''
 OPTIONS = ''
 
@@ -56,21 +55,26 @@ def add_aws_account_to_cwp(name, role_arn, external_id):
         'externalId': external_id
     }
 
-    print('\nAdding target AWS account to Radware CWP...')
-    resp = http_request('post', url, payload, False)
-
-    if resp.status_code in [200, 201]:
-        resp = json.loads(resp.content)
+    if OPTIONS.dry_run:
+        print('\nDRY-RUN')
+        print(f'\nURL: {url}\n\nPAYLOAD: {payload}')
         return True
-
-    elif resp.status_code == 400:
-        print('ADD ACCOUNT: Bad request.')
-        print(payload)
-        return False
     else:
-        print('Unknown error when attempting to add AWS account.')
-        print(resp)
-        return False
+        print('\nAdding target AWS account to Radware CWP...')
+        resp = http_request('post', url, payload, False)
+
+        if resp.status_code in [200, 201]:
+            resp = json.loads(resp.content)
+            return True
+
+        elif resp.status_code == 400:
+            print('ADD ACCOUNT: Bad request.')
+            print(payload)
+            return False
+        else:
+            print('Unknown error when attempting to add AWS account.')
+            print(resp)
+            return False
 
 
 def get_aws_accounts_from_cwp():
@@ -92,40 +96,20 @@ def get_aws_accounts_from_cwp():
 
 def get_aws_org_parent(aws_org_client, id):
     try:
-        parentresp = aws_org_client.list_parents(
+        parent_resp = aws_org_client.list_parents(
             ChildId=id,
             MaxResults=10
         )['Parents']
 
-        if parentresp[0]['Type'] == 'ORGANIZATIONAL_UNIT':
+        if parent_resp[0]['Type'] == 'ORGANIZATIONAL_UNIT':
             ouresp = aws_org_client.describe_organizational_unit(
-                OrganizationalUnitId=parentresp[0]['Id']
+                OrganizationalUnitId=parent_resp[0]['Id']
             )['OrganizationalUnit']
             return ouresp
-        elif parentresp[0]['Type'] == 'ROOT':
+        elif parent_resp[0]['Type'] == 'ROOT':
             return False
     except ClientError as e:
         print(f'Unexpected error: {e}')
-
-
-def get_aws_org_ou_list(aws_org_client, aws_account):
-    ou_list = []
-    current_parent = get_aws_org_parent(aws_org_client, aws_account)
-    if current_parent:
-        ou_list.append(current_parent['Name'])
-    else:
-        return ou_list
-
-    while current_parent:
-        current_parent = get_aws_org_parent(aws_org_client, current_parent['Id'])
-        if current_parent:
-            ou_list.insert(0, current_parent['Name'])
-
-    if len(ou_list) > 5:
-        print(f'ERROR: OUs have exceeded the depth limit of 5: \n{ou_list}')
-        exit(1)
-    else:
-        return ou_list
 
 
 def get_cft_stack(aws_cf_client, name):
@@ -150,16 +134,16 @@ def check_cft_stack_exists(aws_cf_client, name):
         print(f'Unexpected error: {e}')
 
 
-def create_cft_stack(aws_cf_client, name, cfturl, external_id):
+def create_cft_stack(aws_cf_client, name, cft_url, external_id):
     try:
         resp = aws_cf_client.create_stack(
             StackName=name,
-            TemplateURL=cfturl,
+            TemplateURL=cft_url,
             Parameters=[
                 {
-                    'ParameterKey': 'Externalid',
+                    'ParameterKey': 'ExternalId',
                     'ParameterValue': external_id
-                },
+                }
             ],
             Capabilities=['CAPABILITY_IAM'],
         )
@@ -174,7 +158,7 @@ def mode_crossaccount_onboard(aws_sts_client):
     print(f'\nAssuming Role into target account using ARN: {assume_role_arn}')
 
     sts_resp = aws_sts_client.assume_role(
-        role_arn=assume_role_arn,
+        RoleArn=assume_role_arn,
         RoleSessionName='DeploycwpCFTSession',
         DurationSeconds=1800
     )
@@ -242,14 +226,10 @@ def mode_organizations_onboard(aws_org_client, aws_sts_client, aws_cf_client):
 
     for account in unprotected_account_list:
         print(f'\n*** Initiating onboarding for: {account["id"]} | {account["name"]}')
-        aws_ou_list = get_aws_org_ou_list(aws_org_client, account['id'])
-        if account[
-            'id'] == caller_account_number and aws_ou_list:  # OUs exist and AWS account number is the caller (local)
-            cwp_ou_id = process_organizatonal_units(aws_ou_list)
+
+        if account['id'] == caller_account_number:
             cwp_cloud_account_id = process_account(aws_cf_client, account['name'])
-            if cwp_cloud_account_id:
-                ou_attached = attach_account_to_ou_in_cwp(cwp_cloud_account_id, cwp_ou_id)
-        elif aws_ou_list:  # OUs exist and AWS account number is not the callers
+        else:
             assume_role_arn = 'arn:aws:iam::' + account[
                 'id'] + ':role/' + OPTIONS.role_name  # Build role ARN of target account being onboarded to assume into
             print(f'\nAssuming Role into target account using ARN: {assume_role_arn}')
@@ -266,22 +246,14 @@ def mode_organizations_onboard(aws_org_client, aws_sts_client, aws_cf_client):
                                          region_name=OPTIONS.region_name
                                          )
 
-            cwp_ou_id = process_organizatonal_units(aws_ou_list)
-            cwp_cloud_account_id = process_account(aws_cf_client, account['name'])
-            if cwp_cloud_account_id:
-                ou_attached = attach_account_to_ou_in_cwp(cwp_cloud_account_id, cwp_ou_id)
-        elif not aws_ou_list:  # Account is in AWS Orgs root
             cwp_cloud_account_id = process_account(aws_cf_client, account['name'])
 
-        if (not cwp_cloud_account_id or not cwp_ou_id or not ou_attached) and not OPTIONS.ignore_failures:
+        if (not cwp_cloud_account_id) and not OPTIONS.ignore_failures:
             count_failures += 1
             print(f'\nError when attempting to onboard AWS account to CWP. Exiting...')
             _print_stats(len(unprotected_account_list), count_successes, count_failures)
             exit(1)
-        elif (cwp_cloud_account_id == False or not cwp_ou_id or not ou_attached) and OPTIONS.ignore_failures:
-            print('\nError when attempting to onboard AWS account to CWP. Continuing...')
-            count_failures += 1
-        elif cwp_ou_id and cwp_cloud_account_id and ou_attached:
+        elif cwp_cloud_account_id:
             count_successes += 1
 
     _print_stats(len(unprotected_account_list), count_successes, count_failures)
@@ -289,8 +261,8 @@ def mode_organizations_onboard(aws_org_client, aws_sts_client, aws_cf_client):
 
 def process_account(aws_cf_client, aws_account_name):
     # Check if the CFT Stack exists from a previous run
-    cwpstack = 'cwpPolicyAutomated'
-    if check_cft_stack_exists(aws_cf_client, cwpstack):
+    cwp_stack = 'RadwareCWP-ReadOnly-Policy-Automated'
+    if check_cft_stack_exists(aws_cf_client, cwp_stack):
         print('\nStack exists.  Perhaps this script has already been run?')
         return False
     else:
@@ -298,13 +270,13 @@ def process_account(aws_cf_client, aws_account_name):
 
     print('\nProvisioning the CloudFormation stack in AWS...')
     external_id = ''.join(choice(string.ascii_letters + string.digits) for _ in range(24))
-    stack_created = create_cft_stack(aws_cf_client, cwpstack, cft_s3_url, external_id)
+    stack_created = create_cft_stack(aws_cf_client, cwp_stack, cft_s3_url, external_id)
 
     # CHECK CFT STATUS
     t = 0
     while t < 20:
         t += 1
-        stack = get_cft_stack(aws_cf_client, cwpstack)
+        stack = get_cft_stack(aws_cf_client, cwp_stack)
         if stack['StackStatus'] not in ['CREATE_IN_PROGRESS', 'CREATE_COMPLETE']:
             print(f'Something went wrong during CFT stack deployment: {stack["StackStatus"]}')
             return False
@@ -316,14 +288,14 @@ def process_account(aws_cf_client, aws_account_name):
             sleep(15)
 
             # Get CFT Stack info to pull the Role ARN
-    cft_stack = get_cft_stack(aws_cf_client, cwpstack)
-    role_arn = False
+    cft_stack = get_cft_stack(aws_cf_client, cwp_stack)
+    role_arn = ''
     for output in cft_stack['Outputs']:
-        if output['OutputKey'] == 'role_arnID':
+        if output['OutputKey'] == 'RoleARNID':
             role_arn = output['OutputValue']
 
     # Add the AWS account to CWP
-    cwp_account_added = add_aws_account_to_cwp(aws_account_name, role_arn, external_id, cwpreadonly)
+    cwp_account_added = add_aws_account_to_cwp(aws_account_name, role_arn, external_id)
     print(f'Added: {role_arn.split(":")[4]} | {aws_account_name} | {cwp_account_added}')
     return cwp_account_added
 
@@ -375,16 +347,13 @@ def http_request(request_type, url, payload, token, silent):
 
 
 def main(argv=None):
-    global api_token, cft_s3_url, cwpreadonly, mode, OPTIONS
-
-    token = get_api_token(username='api_user@radwarese.com', password='Matt!234')
-    print(f"My Token: {token}")
+    global api_token, cft_s3_url, mode, OPTIONS
 
     # handle arguments
     if argv is None:
         argv = sys.argv[2:]
 
-    example_text = f'\nHelp with modes:\n {sys.argv[0]} local --help\n {sys.argv[0]} crossaccount --help\n {sys.argv[0]} organizations --help\nExamples:\n {sys.argv[0]} local --name "AWS DEV" --region us-east-1\n {sys.argv[0]} crossaccount --account 987654321012 --name "AWS DEV" --role MyRoleName --region us-east-1\n {sys.argv[0]} organizations --role MyRoleName --region us-east-1 --ignore-failures'
+    example_text = f'\nHelp with modes:\n {sys.argv[0]} local --help\n {sys.argv[0]} cross-account --help\n {sys.argv[0]} organizations --help\nExamples:\n {sys.argv[0]} local --name "AWS DEV" --region us-east-1\n {sys.argv[0]} cross-account --account 987654321012 --name "AWS DEV" --role MyRoleName --region us-east-1\n {sys.argv[0]} organizations --role MyRoleName --region us-east-1 --ignore-failures'
 
     parser = argparse.ArgumentParser(epilog=example_text, formatter_class=RawTextHelpFormatter)
     parser._action_groups.pop()
@@ -393,6 +362,8 @@ def main(argv=None):
 
     optional.add_argument('--region', dest='region_name', default='us-east-1',
                           help='AWS Region Name for CWP CFT deployment. Default: us-east-1')
+    optional.add_argument('--dry-run', dest='dry_run', default=False,
+                          help='Dry-run (read-only mode for testing)', action='store_true')
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -401,7 +372,7 @@ def main(argv=None):
     if sys.argv[1]:
         mode = sys.argv[1].lower()
         print(f'\nMode: {mode}')
-        if mode not in ['local', 'crossaccount', 'organizations']:
+        if mode not in ['local', 'cross-account', 'organizations']:
             print('ERROR: Invalid run mode.\n')
             parser.print_help()
             exit(1)
@@ -412,7 +383,7 @@ def main(argv=None):
     if mode == 'local':
         required.add_argument('--name', dest='account_name',
                               help='Cloud account friendly name in quotes (e.g. "AWS PROD")', required=True)
-    elif mode == 'crossaccount':
+    elif mode == 'cross-account':
         required.add_argument('--account', dest='account_number', help='Cloud account number (e.g. 987654321012)',
                               required=True)
         required.add_argument('--name', dest='account_name',
@@ -436,8 +407,11 @@ def main(argv=None):
 
     # Get CWP API credentials from env variables
     if not os.environ.get('cwp_api_username') or not os.environ.get('cwp_api_password'):
-        print('\nERROR: Radware CWP credentials not found in environment variables.')
+        print('\nERROR: Radware CWP API credentials not found in environment variables.')
         exit(1)
+    else:
+        token = get_api_token(username=os.environ.get('cwp_api_username'), password=os.environ.get('cwp_api_password'))
+        print(f"My Token: {token[0:15]}...")
 
     # Get AWS creds for the client. Region is needed for CFT deployment location.
     print('\nCreating AWS service clients...\n')
@@ -456,11 +430,14 @@ def main(argv=None):
 
     cft_s3_url = config.get('aws', 'cft_s3_url')
 
-    if mode == 'local' and OPTIONS.account_name and OPTIONS.region_name and OPTIONS.cwpmode:
+    if OPTIONS.dry_run:
+        print('\n*** DRY RUN ENABLED ***')
+
+    if mode == 'local' and OPTIONS.account_name and OPTIONS.region_name:
         process_account(aws_cf_client, OPTIONS.account_name)
-    elif mode == 'crossaccount' and OPTIONS.account_number and OPTIONS.account_name and OPTIONS.role_name and OPTIONS.region_name and OPTIONS.cwpmode:
+    elif mode == 'cross-account' and OPTIONS.account_number and OPTIONS.account_name and OPTIONS.role_name and OPTIONS.region_name:
         mode_crossaccount_onboard(aws_sts_client)
-    elif mode == 'organizations' and OPTIONS.role_name and OPTIONS.region_name and OPTIONS.cwpmode:
+    elif mode == 'organizations' and OPTIONS.role_name and OPTIONS.region_name:
         if OPTIONS.ignore_ou:  # Ignore OU processing flag detected
             print('\nIgnore Organizational Units flag is set to True. All AWS accounts will be placed in root.')
         mode_organizations_onboard(aws_org_client, aws_sts_client, aws_cf_client)
