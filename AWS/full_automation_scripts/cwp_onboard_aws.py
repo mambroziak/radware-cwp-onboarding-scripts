@@ -78,6 +78,7 @@ def add_aws_account_to_cwp(name, role_arn, external_id):
 
 
 def get_aws_accounts_from_cwp():
+    # THIS DOES NOT WORK YET
     url = "https://api.CWP.com/v2/CloudAccounts"
     payload = {}
 
@@ -151,6 +152,89 @@ def create_cft_stack(aws_cf_client, name, cft_url, external_id):
     except ClientError as e:
         print(f'Unexpected error: {e}')
         return False
+
+
+def get_aws_ec2_regions():
+    aws_ec2_client = boto3.client('ec2', region_name=OPTIONS.region_name)
+    resp = aws_ec2_client.describe_regions(AllRegions=False)
+    aws_region_list = []
+    for region in resp['Regions']:
+        aws_region_list.append(region['RegionName'])
+
+    return aws_region_list
+
+
+def get_aws_vpcfl_buckets(aws_region_list):
+    vpcfl_buckets_list = []
+    next_token = False
+
+    print('Checking VPC Flow Log configurations in each region...')
+    for region in aws_region_list:
+        aws_ec2_client = boto3.client('ec2', region_name=region)
+        try:
+            resp = aws_ec2_client.describe_flow_logs(
+                Filters=[
+                    {
+                        'Name': 'log-destination-type',
+                        'Values': [
+                            's3',
+                        ]
+                    },
+                ],
+                MaxResults=1
+            )
+
+            # add s3 bucket ARNs to list
+            for item in resp['FlowLogs']:
+                vpcfl_buckets_list.append(item['LogDestination'])
+
+            if 'NextToken' in resp:  # More pages of flow logs to process
+                next_token = True
+
+            while next_token:
+                print('Fetching next page of flow logs...')
+                resp = aws_ec2_client.describe_flow_logs(NextToken=resp['NextToken'], MaxResults=1)
+                for item in resp['FlowLogs']:
+                    vpcfl_buckets_list.append(item['LogDestination'])
+
+                if 'NextToken' in resp:
+                    next_token = True
+                else:
+                    next_token = False  # NextToken not found
+                    break
+
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'UnauthorizedOperation':
+                print(f'Unauthorized to read AWS EC2 region: {region}')
+            else:
+                print(f'Unexpected error: {e}')
+
+    # remove duplicate bucket ARNs from list
+    vpcfl_buckets_list = list(dict.fromkeys(vpcfl_buckets_list))
+
+    print('\nFlow Log Bucket List (duplicates removed):')
+    for bucket in vpcfl_buckets_list:
+        print(f'  {bucket}')
+
+    return vpcfl_buckets_list
+
+
+def get_aws_cloudtrail_buckets():
+    cloudtrail_buckets_list = []
+    aws_ct_client = boto3.client('cloudtrail', region_name=OPTIONS.region_name)
+    resp = aws_ct_client.describe_trails(includeShadowTrails=True)
+
+    # add cloudtrail bucket names to list
+    for trail in resp['trailList']:
+        cloudtrail_buckets_list.append(trail['S3BucketName'])
+
+    # remove duplicate bucket names from list
+    cloudtrail_buckets_list = list(dict.fromkeys(cloudtrail_buckets_list))
+    print('\nCloudTrail Bucket List (duplicates removed):')
+    for bucket in cloudtrail_buckets_list:
+        print(f'  {bucket}')
+
+    return cloudtrail_buckets_list
 
 
 def mode_crossaccount_onboard(aws_sts_client):
@@ -260,6 +344,7 @@ def mode_organizations_onboard(aws_org_client, aws_sts_client, aws_cf_client):
 
 
 def process_account(aws_cf_client, aws_account_name):
+
     # Check if the CFT Stack exists from a previous run
     cwp_stack = 'RadwareCWP-ReadOnly-Policy-Automated'
     if check_cft_stack_exists(aws_cf_client, cwp_stack):
@@ -270,6 +355,13 @@ def process_account(aws_cf_client, aws_account_name):
 
     print('\nProvisioning the CloudFormation stack in AWS...')
     external_id = ''.join(choice(string.ascii_letters + string.digits) for _ in range(24))
+    aws_region_list = get_aws_ec2_regions()
+    get_aws_cloudtrail_buckets()
+
+    print('forced exit hard coded')
+    quit()
+    aws_vpcfl_buckets_list = get_aws_vpcfl_buckets(aws_region_list)
+
     stack_created = create_cft_stack(aws_cf_client, cwp_stack, cft_s3_url, external_id)
 
     # CHECK CFT STATUS
@@ -416,6 +508,7 @@ def main(argv=None):
     # Get AWS creds for the client. Region is needed for CFT deployment location.
     print('\nCreating AWS service clients...\n')
     aws_cf_client = boto3.client('cloudformation', region_name=OPTIONS.region_name)
+
     try:  # Check for successful authentication
         aws_cf_client.list_stacks()
     except ClientError as e:
